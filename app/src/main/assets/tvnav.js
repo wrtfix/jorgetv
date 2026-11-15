@@ -22,6 +22,9 @@ function boot() {
     'transform:scale(1.07) !important;transition:transform .15s ease,box-shadow .15s ease !important;' +
     'box-shadow:0 10px 30px rgba(0,0,0,.7) !important;border-radius:6px;}' +
     'iframe.__tvf,video.__tvf{transform:none !important;outline-offset:-3px !important}' +
+    '.__tvhdr{display:none !important}' +
+    '#__tvmenu{position:fixed;top:18px;left:24px;z-index:2147483646;background:rgba(20,20,20,.75);' +
+    'color:#fff;border:0;border-radius:22px;padding:8px 18px;font:600 18px sans-serif;cursor:pointer}' +
     '*:focus{outline:none}' +
     '::-webkit-scrollbar{display:none}';
   (document.head || document.documentElement).appendChild(css);
@@ -132,6 +135,83 @@ function boot() {
     document.body.style.setProperty('overflow', 'auto', 'important');
   }
 
+  // ---------- Barra superior oculta + botón "☰ Menú" ----------
+  var header = null, menuBtn = null, headerOpen = false;
+
+  function hasLinks(el) { return el.querySelectorAll(SEL).length > 0; }
+
+  function isTopBar(el) {
+    if (!el || el === document.body || el === document.documentElement || el.id === '__tvmenu') return false;
+    var r = el.getBoundingClientRect();
+    return r.width >= window.innerWidth * 0.6 && r.height > 20 && r.height <= 260 &&
+      r.top + window.scrollY < 60 && hasLinks(el);
+  }
+
+  function findHeader() {
+    var sem = document.querySelectorAll('header,[role="banner"],nav');
+    for (var i = 0; i < sem.length; i++) {
+      if (!isTopBar(sem[i])) continue;
+      // si es un <nav> dentro de un <header>, ocultar el header entero
+      var top = sem[i];
+      for (var p = top.parentElement; p && p !== document.body; p = p.parentElement) {
+        if (isTopBar(p)) top = p; else break;
+      }
+      return top;
+    }
+    if (window.scrollY > 10) return null;
+    var xs = [0.5, 0.15, 0.85];
+    for (var j = 0; j < xs.length; j++) {
+      var el = document.elementFromPoint(window.innerWidth * xs[j], 25), found = null;
+      for (var q = el; q && q !== document.body; q = q.parentElement) {
+        if (isTopBar(q)) found = q; // el más externo que siga siendo "barra"
+      }
+      if (found) return found;
+    }
+    return null;
+  }
+
+  function setupHeader() {
+    if (IS_FRAME) return;
+    if (header && document.contains(header)) return;
+    header = findHeader();
+    if (!header) return;
+    header.classList.add('__tvhdr');
+    headerOpen = false;
+    if (!menuBtn) {
+      menuBtn = document.createElement('button');
+      menuBtn.id = '__tvmenu';
+      menuBtn.textContent = '☰ Menú';
+      menuBtn.addEventListener('click', function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        openHeader();
+      });
+    }
+    if (!document.contains(menuBtn)) document.body.appendChild(menuBtn);
+  }
+
+  function openHeader() {
+    if (!header) return;
+    header.classList.remove('__tvhdr');
+    headerOpen = true;
+    menuBtn.style.display = 'none';
+    var items = candidates().filter(function (el) { return header.contains(el); });
+    items.sort(function (a, b) { // de izquierda a derecha, fila por fila
+      var ra = a.getBoundingClientRect(), rb = b.getBoundingClientRect();
+      var ca = ra.top + ra.height / 2, cb = rb.top + rb.height / 2;
+      return Math.abs(ca - cb) > 25 ? ca - cb : ra.left - rb.left;
+    });
+    if (items[0]) setFocus(items[0]);
+  }
+
+  function closeHeader(focusMenu) {
+    if (!header || !headerOpen) return;
+    header.classList.add('__tvhdr');
+    headerOpen = false;
+    menuBtn.style.display = '';
+    if (focusMenu) setFocus(menuBtn);
+  }
+
   function overlap(a1, a2, b1, b2) { return Math.min(a2, b2) - Math.max(a1, b1); }
 
   function pickInitial() {
@@ -149,7 +229,8 @@ function boot() {
       var ra = a.getBoundingClientRect(), rb = b.getBoundingClientRect();
       return (ra.top - rb.top) || (ra.left - rb.left);
     });
-    return list[0] || null;
+    var noMenu = list.filter(function (el) { return el !== menuBtn; });
+    return noMenu[0] || list[0] || null;
   }
 
   function best(dir) {
@@ -181,6 +262,7 @@ function boot() {
   }
 
   function setFocus(el) {
+    if (headerOpen && el && el !== menuBtn && !header.contains(el)) closeHeader(false);
     if (cur) cur.classList.remove('__tvf');
     cur = el;
     if (!el) return;
@@ -231,6 +313,7 @@ function boot() {
   window.__tvBack = function () {
     var ae = document.activeElement;
     if (isTyping(ae)) { ae.blur(); return true; }
+    if (headerOpen) { closeHeader(true); return true; }
     if (ae && ae.tagName === 'IFRAME') { // salir del reproductor a la página
       ae.blur();
       window.focus();
@@ -336,9 +419,12 @@ function boot() {
     if (el && el !== cur && candidates().indexOf(el) >= 0) setFocus(el);
   }, true);
 
+  setupHeader();
+
   // Arranca con algo seleccionado, y re-selecciona si el elemento desaparece (cambios de página en SPA)
   setInterval(function () {
     if (IS_FRAME && !document.hasFocus()) return; // los iframes solo marcan foco si están activos
+    setupHeader();
     var modal = findModal();
     if (modal && (!cur || !modal.contains(cur))) {
       var el0 = pickInitial();

@@ -26,6 +26,8 @@ Si aparece un cartel (cookies, aviso, publicidad), el foco queda dentro del cart
 
 **En el reproductor:** parado sobre el video, OK entra a los controles (play, ⚙, subtítulos). Con el video seleccionado, ←/→ adelantan o atrasan 10 s. Desde el borde de los controles salís a la página, o con **Atrás**.
 
+**Barra superior:** se oculta y queda un botón **☰ Menú** arriba a la izquierda. Subí hasta arriba, OK abre la barra; bajando o con **Atrás** se vuelve a ocultar.
+
 La navegación vive en `app/src/main/assets/tvnav.js` (se inyecta en cada página).
 
 ## Cambiar de sitio
