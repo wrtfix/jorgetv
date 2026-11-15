@@ -38,8 +38,52 @@
     return cs.visibility !== 'hidden' && cs.display !== 'none' && parseFloat(cs.opacity) > 0.05;
   }
 
+  var CLOSE_RX = /^(×|✕|✖|x|close|cerrar|aceptar|accept|acepto|ok|entendido|continuar|continue|got it|agree|i agree|de acuerdo|skip|saltar|omitir|no,? gracias|no thanks)$/i;
+
+  function isOverlayBox(el) {
+    var cs = getComputedStyle(el);
+    if (cs.position !== 'fixed' && cs.position !== 'absolute') return false;
+    var r = el.getBoundingClientRect();
+    return r.width * r.height >= window.innerWidth * window.innerHeight * 0.15 &&
+      cs.display !== 'none' && cs.visibility !== 'hidden';
+  }
+
+  // Devuelve el cartel/modal que está tapando la página, o null
+  function findModal() {
+    var marked = Array.prototype.slice.call(document.querySelectorAll(
+      'dialog[open],[role="dialog"],[role="alertdialog"],[aria-modal="true"]'))
+      .filter(function (el) { var r = el.getBoundingClientRect(); return r.width > 20 && r.height > 20 && getComputedStyle(el).visibility !== 'hidden'; });
+    if (marked.length) return marked[marked.length - 1];
+    var pts = [[0.5, 0.5], [0.5, 0.35], [0.5, 0.65]];
+    for (var i = 0; i < pts.length; i++) {
+      var el = document.elementFromPoint(window.innerWidth * pts[i][0], window.innerHeight * pts[i][1]);
+      var found = null;
+      for (var p = el; p && p !== document.body && p !== document.documentElement; p = p.parentElement) {
+        if (getComputedStyle(p).position === 'fixed' && isOverlayBox(p)) found = p; // el fijo más externo
+      }
+      if (found) {
+        // Si el "overlay" contiene casi toda la página (shell de una SPA), no es un modal
+        var all = document.querySelectorAll(SEL).length;
+        if (found.querySelectorAll(SEL).length < all * 0.6) return found;
+      }
+    }
+    return null;
+  }
+
+  function looksClickable(el) {
+    if (el.matches(SEL)) return true;
+    var cs = getComputedStyle(el);
+    if (cs.cursor !== 'pointer') return false;
+    var r = el.getBoundingClientRect();
+    return r.width < window.innerWidth * 0.8 && r.height < 250 &&
+      !(el.parentElement && getComputedStyle(el.parentElement).cursor === 'pointer');
+  }
+
   function candidates() {
-    var all = Array.prototype.slice.call(document.querySelectorAll(SEL));
+    var modal = findModal();
+    var all = modal
+      ? Array.prototype.slice.call(modal.querySelectorAll('*')).filter(looksClickable)
+      : Array.prototype.slice.call(document.querySelectorAll(SEL));
     var list = all.filter(function (el) { return !el.disabled && visible(el); });
     // Si un candidato está adentro de otro (ej. botón dentro de una card), gana el de afuera
     return list.filter(function (el) {
@@ -50,9 +94,44 @@
     });
   }
 
+  function label(el) {
+    return ((el.innerText || el.value || el.getAttribute('aria-label') || el.title || '') + '').trim();
+  }
+
+  // Botón para cerrar/aceptar dentro del modal (o null)
+  function closeButton(modal) {
+    var list = Array.prototype.slice.call(modal.querySelectorAll('*')).filter(function (el) {
+      return looksClickable(el) && visible(el);
+    });
+    for (var i = 0; i < list.length; i++) if (CLOSE_RX.test(label(list[i]))) return list[i];
+    for (var j = 0; j < list.length; j++) {
+      var a = (list[j].getAttribute('aria-label') || '') + ' ' + (list[j].className || '');
+      if (/close|cerrar|dismiss/i.test(a)) return list[j];
+    }
+    return null;
+  }
+
+  function hideModal(modal) {
+    modal.style.setProperty('display', 'none', 'important');
+    // fondos oscuros sueltos que tapan la página
+    Array.prototype.slice.call(document.body.children).forEach(function (el) {
+      if (el !== modal && getComputedStyle(el).position === 'fixed' && isOverlayBox(el) &&
+          el.querySelectorAll(SEL).length === 0) {
+        el.style.setProperty('display', 'none', 'important');
+      }
+    });
+    document.documentElement.style.overflow = '';
+    document.body.style.setProperty('overflow', 'auto', 'important');
+  }
+
   function overlap(a1, a2, b1, b2) { return Math.min(a2, b2) - Math.max(a1, b1); }
 
   function pickInitial() {
+    var modal = findModal();
+    if (modal) {
+      var btn = closeButton(modal);
+      if (btn) return btn;
+    }
     var vh = window.innerHeight;
     var list = candidates().filter(function (el) {
       var r = el.getBoundingClientRect();
@@ -129,12 +208,30 @@
       if (cur.paused) cur.play(); else cur.pause();
       return;
     }
+    ['pointerdown', 'mousedown', 'pointerup', 'mouseup'].forEach(function (t) {
+      try { cur.dispatchEvent(new MouseEvent(t, { bubbles: true, cancelable: true, view: window })); } catch (e) {}
+    });
     cur.click();
   };
 
   window.__tvBack = function () {
     var ae = document.activeElement;
     if (isTyping(ae)) { ae.blur(); return true; }
+    var modal = findModal();
+    if (modal) {
+      var btn = closeButton(modal);
+      if (btn) btn.click();
+      else {
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', keyCode: 27, bubbles: true }));
+      }
+      setTimeout(function () {
+        var still = findModal();
+        if (still === modal) hideModal(modal);
+        if (cur && !document.contains(cur)) cur = null;
+        setFocus(pickInitial());
+      }, 300);
+      return true;
+    }
     return false;
   };
 
@@ -156,12 +253,19 @@
   // Si se hace click con el mouse/touch, el foco sigue a ese elemento
   window.addEventListener('click', function (e) {
     var el = e.target && e.target.closest ? e.target.closest(SEL) : null;
+    if (!el) return;
     if (el && el !== cur && candidates().indexOf(el) >= 0) setFocus(el);
   }, true);
 
   // Arranca con algo seleccionado, y re-selecciona si el elemento desaparece (cambios de página en SPA)
   setInterval(function () {
-    if (!cur || !document.contains(cur)) {
+    var modal = findModal();
+    if (modal && (!cur || !modal.contains(cur))) {
+      var el0 = pickInitial();
+      if (el0) setFocus(el0);
+      return;
+    }
+    if (!cur || !document.contains(cur) || !visible(cur)) {
       var el = pickInitial();
       if (el) setFocus(el);
     }

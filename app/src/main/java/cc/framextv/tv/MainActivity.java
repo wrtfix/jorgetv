@@ -26,7 +26,8 @@ import java.nio.charset.StandardCharsets;
  * Wrapper de Android TV con navegación estilo Netflix:
  *  - Flechas: saltan entre cards/links/botones (el seleccionado se agranda y resalta)
  *  - OK: abre el elemento seleccionado (en un campo de texto, abre el teclado)
- *  - Atrás: cierra el teclado / sale del video fullscreen / vuelve a la página anterior / sale
+ *  - Atrás: cierra el teclado / cierra carteles (modals) / sale del video fullscreen / vuelve atrás / sale
+ *  - Las ventanas emergentes (publicidad) se bloquean
  *
  * La lógica de navegación está en assets/tvnav.js y se inyecta en cada página.
  */
@@ -60,6 +61,9 @@ public class MainActivity extends Activity {
         s.setLoadWithOverviewMode(true);
         s.setUseWideViewPort(true);
         s.setMixedContentMode(WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE);
+        // Bloquea pop-ups / pop-unders de publicidad (window.open, target=_blank)
+        s.setSupportMultipleWindows(true);
+        s.setJavaScriptCanOpenWindowsAutomatically(false);
         // Saca la marca "; wv" para que el sitio no detecte que es un WebView
         s.setUserAgentString(s.getUserAgentString().replace("; wv", ""));
         CookieManager.getInstance().setAcceptCookie(true);
@@ -85,6 +89,11 @@ public class MainActivity extends Activity {
         });
 
         chromeClient = new WebChromeClient() {
+            @Override
+            public boolean onCreateWindow(WebView view, boolean isDialog, boolean isUserGesture, android.os.Message resultMsg) {
+                return false; // no se abre ninguna ventana nueva
+            }
+
             @Override
             public void onShowCustomView(View view, CustomViewCallback callback) {
                 if (customView != null) {
