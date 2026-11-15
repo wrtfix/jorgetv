@@ -6,8 +6,13 @@
 (function () {
   if (window.__tvNavLoaded) return;
   window.__tvNavLoaded = true;
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
+  else boot();
 
-  var SEL = 'a[href],button,input,select,textarea,summary,video,' +
+function boot() {
+  var IS_FRAME = window !== window.top; // estamos dentro de un iframe (ej. el reproductor)
+
+  var SEL = 'a[href],button,input,select,textarea,summary,video,iframe,' +
     '[role="button"],[role="link"],[role="tab"],[role="menuitem"],[role="option"],' +
     '[tabindex]:not([tabindex="-1"]),[onclick]';
 
@@ -16,6 +21,7 @@
     '.__tvf{outline:3px solid #fff !important;outline-offset:3px !important;' +
     'transform:scale(1.07) !important;transition:transform .15s ease,box-shadow .15s ease !important;' +
     'box-shadow:0 10px 30px rgba(0,0,0,.7) !important;border-radius:6px;}' +
+    'iframe.__tvf,video.__tvf{transform:none !important;outline-offset:-3px !important}' +
     '*:focus{outline:none}' +
     '::-webkit-scrollbar{display:none}';
   (document.head || document.documentElement).appendChild(css);
@@ -33,7 +39,8 @@
     var r = el.getBoundingClientRect();
     if (r.width < 8 || r.height < 8) return false;
     var vw = window.innerWidth, vh = window.innerHeight;
-    if (r.width * r.height > vw * vh * 0.5) return false; // contenedores gigantes no
+    var big = el.tagName === 'IFRAME' || el.tagName === 'VIDEO';
+    if (!big && r.width * r.height > vw * vh * 0.5) return false; // contenedores gigantes no
     var cs = getComputedStyle(el);
     return cs.visibility !== 'hidden' && cs.display !== 'none' && parseFloat(cs.opacity) > 0.05;
   }
@@ -81,8 +88,9 @@
 
   function candidates() {
     var modal = findModal();
-    var all = modal
-      ? Array.prototype.slice.call(modal.querySelectorAll('*')).filter(looksClickable)
+    // Dentro de un modal o del reproductor, también cuentan los <div>/<span> clickeables
+    var all = (modal || IS_FRAME)
+      ? Array.prototype.slice.call((modal || document).querySelectorAll('*')).filter(looksClickable)
       : Array.prototype.slice.call(document.querySelectorAll(SEL));
     var list = all.filter(function (el) { return !el.disabled && visible(el); });
     // Si un candidato está adentro de otro (ej. botón dentro de una card), gana el de afuera
@@ -147,6 +155,8 @@
   function best(dir) {
     var f = cur.getBoundingClientRect();
     var fc = { x: f.left + f.width / 2, y: f.top + f.height / 2 };
+    // Desde algo muy ancho (video, banner) al subir/bajar, arrancá por la izquierda como Netflix
+    if ((dir === 'up' || dir === 'down') && f.width > window.innerWidth * 0.4) fc.x = f.left + 40;
     var bestEl = null, bestScore = Infinity;
     candidates().forEach(function (el) {
       if (el === cur || el.contains(cur) || cur.contains(el)) return;
@@ -176,7 +186,7 @@
     if (!el) return;
     el.classList.add('__tvf');
     el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'smooth' });
-    if (!isTyping(el)) { try { el.focus({ preventScroll: true }); } catch (e) {} }
+    if (!isTyping(el) && el.tagName !== 'IFRAME') { try { el.focus({ preventScroll: true }); } catch (e) {} }
   }
 
   function move(dir) {
@@ -186,7 +196,10 @@
     }
     var next = best(dir);
     if (next) setFocus(next);
-    else if (dir === 'up' || dir === 'down') {
+    else if (IS_FRAME) {
+      // Llegamos al borde del reproductor: devolver el control a la página de afuera
+      try { window.parent.postMessage({ __tvnav: 'exit', dir: dir }, '*'); } catch (e) {}
+    } else if (dir === 'up' || dir === 'down') {
       window.scrollBy({ top: (dir === 'down' ? 1 : -1) * window.innerHeight * 0.6, behavior: 'smooth' });
     }
   }
@@ -204,6 +217,7 @@
       if (window.TV) window.TV.showKeyboard();
       return;
     }
+    if (cur.tagName === 'IFRAME') { enterFrame(cur); return; }
     if (cur.tagName === 'VIDEO') {
       if (cur.paused) cur.play(); else cur.pause();
       return;
@@ -217,6 +231,12 @@
   window.__tvBack = function () {
     var ae = document.activeElement;
     if (isTyping(ae)) { ae.blur(); return true; }
+    if (ae && ae.tagName === 'IFRAME') { // salir del reproductor a la página
+      ae.blur();
+      window.focus();
+      setFocus(ae);
+      return true;
+    }
     var modal = findModal();
     if (modal) {
       var btn = closeButton(modal);
@@ -237,9 +257,24 @@
 
   var KEYS = { ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right' };
   window.addEventListener('keydown', function (e) {
-    if (document.fullscreenElement) return; // en el reproductor, las flechas son del video
+    if (document.fullscreenElement) return; // en pantalla completa, las teclas son del video
+    if (IS_FRAME) wake();
+    var isOk = e.key === 'Enter' || e.keyCode === 13 || e.keyCode === 23;
+    if (isOk) {
+      if (isTyping(document.activeElement)) return; // dejar que el formulario se envíe
+      e.preventDefault();
+      e.stopPropagation();
+      if (!e.repeat) window.__tvOk();
+      return;
+    }
     var dir = KEYS[e.key];
     if (!dir) return;
+    if (cur && cur.tagName === 'VIDEO' && (dir === 'left' || dir === 'right')) {
+      e.preventDefault();
+      e.stopPropagation();
+      cur.currentTime = Math.max(0, cur.currentTime + (dir === 'right' ? 10 : -10));
+      return;
+    }
     var ae = document.activeElement;
     if (isTyping(ae)) {
       if (dir === 'left' || dir === 'right') return; // mover el cursor del texto
@@ -250,6 +285,50 @@
     move(dir);
   }, true);
 
+  // Muestra los controles del reproductor (muchos se esconden si "no se mueve el mouse")
+  function wake() {
+    var x = window.innerWidth / 2, y = window.innerHeight / 2;
+    var target = document.elementFromPoint(x, y) || document.body;
+    ['pointermove', 'mousemove', 'mouseover'].forEach(function (t) {
+      try { target.dispatchEvent(new MouseEvent(t, { bubbles: true, clientX: x, clientY: y, view: window })); } catch (e) {}
+    });
+  }
+
+  // Pasa el control del teclado al iframe (reproductor)
+  function enterFrame(frame) {
+    try { frame.focus(); } catch (e) {}
+    try { frame.contentWindow.focus(); } catch (e) {}
+    try { frame.contentWindow.postMessage({ __tvnav: 'enter' }, '*'); } catch (e) {}
+  }
+
+  window.addEventListener('message', function (e) {
+    var d = e.data;
+    if (!d || !d.__tvnav) return;
+    if (d.__tvnav === 'enter') {
+      wake();
+      if (!cur || !document.contains(cur) || !visible(cur)) setFocus(pickInitial());
+      else setFocus(cur);
+    } else if (d.__tvnav === 'exit') {
+      var frames = document.getElementsByTagName('iframe');
+      for (var i = 0; i < frames.length; i++) {
+        if (frames[i].contentWindow === e.source) {
+          try { frames[i].blur(); } catch (er) {}
+          window.focus();
+          setFocus(frames[i]);
+          move(d.dir);
+          return;
+        }
+      }
+    }
+  });
+
+  if (IS_FRAME) {
+    window.addEventListener('focus', function () {
+      wake();
+      if (!cur || !document.contains(cur)) setFocus(pickInitial());
+    });
+  }
+
   // Si se hace click con el mouse/touch, el foco sigue a ese elemento
   window.addEventListener('click', function (e) {
     var el = e.target && e.target.closest ? e.target.closest(SEL) : null;
@@ -259,6 +338,7 @@
 
   // Arranca con algo seleccionado, y re-selecciona si el elemento desaparece (cambios de página en SPA)
   setInterval(function () {
+    if (IS_FRAME && !document.hasFocus()) return; // los iframes solo marcan foco si están activos
     var modal = findModal();
     if (modal && (!cur || !modal.contains(cur))) {
       var el0 = pickInitial();
@@ -270,4 +350,5 @@
       if (el) setFocus(el);
     }
   }, 1000);
+}
 })();

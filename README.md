@@ -20,7 +20,11 @@ Wrapper WebView a pantalla completa con navegación por foco tipo Netflix para e
 |---|---|
 | Flechas | Saltar entre cards / links / botones (el seleccionado se agranda y resalta, la fila scrollea sola) |
 | OK | Abrir lo seleccionado (en el buscador, abre el teclado; si ya estás escribiendo, busca) |
-| Atrás | Cerrar teclado / salir del video fullscreen / página anterior / salir |
+| Atrás | Cerrar teclado / **cerrar cartel (modal)** / salir del video fullscreen / página anterior / salir |
+
+Si aparece un cartel (cookies, aviso, publicidad), el foco queda dentro del cartel y arranca en el botón de aceptar/cerrar. Si no tiene botón, **Atrás** lo oculta. Las ventanas emergentes se bloquean.
+
+**En el reproductor:** parado sobre el video, OK entra a los controles (play, ⚙, subtítulos). Con el video seleccionado, ←/→ adelantan o atrasan 10 s. Desde el borde de los controles salís a la página, o con **Atrás**.
 
 La navegación vive en `app/src/main/assets/tvnav.js` (se inyecta en cada página).
 

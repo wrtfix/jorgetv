@@ -18,9 +18,13 @@ import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.FrameLayout;
 
+import androidx.webkit.WebViewCompat;
+import androidx.webkit.WebViewFeature;
+
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.Collections;
 
 /**
  * Wrapper de Android TV con navegación estilo Netflix:
@@ -29,7 +33,8 @@ import java.nio.charset.StandardCharsets;
  *  - Atrás: cierra el teclado / cierra carteles (modals) / sale del video fullscreen / vuelve atrás / sale
  *  - Las ventanas emergentes (publicidad) se bloquean
  *
- * La lógica de navegación está en assets/tvnav.js y se inyecta en cada página.
+ * La lógica de navegación está en assets/tvnav.js y se inyecta en cada página y en cada iframe
+ * (así funciona dentro del reproductor: play, ajustes, subtítulos...).
  */
 public class MainActivity extends Activity {
 
@@ -42,6 +47,7 @@ public class MainActivity extends Activity {
     private WebChromeClient.CustomViewCallback customViewCallback;
     private WebChromeClient chromeClient;
     private String navScript;
+    private boolean injectedInAllFrames = false;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -70,6 +76,12 @@ public class MainActivity extends Activity {
         CookieManager.getInstance().setAcceptThirdPartyCookies(web, true);
 
         web.addJavascriptInterface(new TvBridge(), "TV");
+
+        // Inyecta la navegación en TODOS los frames, incluidos los iframes del reproductor
+        if (navScript != null && WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
+            WebViewCompat.addDocumentStartJavaScript(web, navScript, Collections.singleton("*"));
+            injectedInAllFrames = true;
+        }
 
         web.setWebViewClient(new WebViewClient() {
             @Override
@@ -134,7 +146,8 @@ public class MainActivity extends Activity {
     }
 
     private void injectNav() {
-        if (navScript != null) web.evaluateJavascript(navScript, null);
+        // Respaldo para WebViews viejos: solo la página principal
+        if (!injectedInAllFrames && navScript != null) web.evaluateJavascript(navScript, null);
     }
 
     private String readAsset(String name) {
@@ -153,7 +166,6 @@ public class MainActivity extends Activity {
     public boolean dispatchKeyEvent(KeyEvent e) {
         int code = e.getKeyCode();
         boolean isUp = e.getAction() == KeyEvent.ACTION_UP;
-        boolean isDown = e.getAction() == KeyEvent.ACTION_DOWN;
 
         // Video en pantalla completa: Atrás lo cierra, el resto va al reproductor
         if (customView != null) {
@@ -166,12 +178,9 @@ public class MainActivity extends Activity {
 
         switch (code) {
             case KeyEvent.KEYCODE_DPAD_CENTER:
-            case KeyEvent.KEYCODE_ENTER:
-            case KeyEvent.KEYCODE_NUMPAD_ENTER:
-                if (isDown && e.getRepeatCount() == 0) {
-                    web.evaluateJavascript("window.__tvOk && window.__tvOk()", null);
-                }
-                return true;
+                // OK del control → Enter, que llega al frame que tenga el foco (página o reproductor)
+                return super.dispatchKeyEvent(new KeyEvent(e.getDownTime(), e.getEventTime(),
+                        e.getAction(), KeyEvent.KEYCODE_ENTER, e.getRepeatCount(), e.getMetaState()));
 
             case KeyEvent.KEYCODE_BACK:
                 if (isUp) {
